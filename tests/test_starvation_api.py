@@ -66,7 +66,7 @@ def test_response_includes_the_supporting_count_and_the_rule_applied(
             "end": "2026-09-15T10:00:00Z",
         },
         "readings_in_window": 5,
-        "excluded_readings": {"duplicates": 0},
+        "excluded_readings": {"duplicates": 0, "out_of_service": 0},
     }
 
 
@@ -143,3 +143,16 @@ def test_duplicate_reading_is_counted_once(client: TestClient) -> None:
     assert body["empty_reading_count"] == 2
     assert body["readings_in_window"] == 3
     assert body["excluded_readings"]["duplicates"] == 1
+
+
+# --- DQ-02: out-of-service readings are not starvation ----------------------
+
+
+def test_station_with_no_docks_is_not_reported_as_starved(client: TestClient) -> None:
+    body = check(client, 103, METRO).json()
+
+    # Station 103 reports 0 bikes but also 0 docks: it is out of service.
+    assert body["starved"] is False
+    assert body["empty_reading_count"] == 0
+    assert body["readings_in_window"] == 0
+    assert body["excluded_readings"]["out_of_service"] == 3

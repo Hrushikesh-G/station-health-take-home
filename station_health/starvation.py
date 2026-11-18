@@ -97,6 +97,11 @@ def deduplicate(readings: Iterable[Reading]) -> tuple[list[Reading], int]:
     return list(latest.values()), duplicates
 
 
+def is_out_of_service(reading: Reading) -> bool:
+    """A station with no docks cannot hold bikes, so it cannot be starved."""
+    return reading.docks_total == 0
+
+
 def is_empty(reading: Reading) -> bool:
     """A reading is empty when no bikes are available to start a journey."""
     return reading.bikes_available == 0
@@ -109,6 +114,7 @@ class StarvationResult:
     empty_reading_count: int
     readings_in_window: int
     duplicates: int
+    out_of_service: int
 
     @property
     def starved(self) -> bool:
@@ -120,11 +126,13 @@ def evaluate_starvation(
 ) -> StarvationResult:
     """Apply the operator's starvation rule to one station's readings for ``day``."""
     window = peak_window_for(config, day)
-    considered, duplicates = deduplicate(readings_in_window(readings, window))
+    unique, duplicates = deduplicate(readings_in_window(readings, window))
+    in_service = [reading for reading in unique if not is_out_of_service(reading)]
     return StarvationResult(
         window=window,
         min_empty_readings=config.min_empty_readings,
-        empty_reading_count=sum(1 for reading in considered if is_empty(reading)),
-        readings_in_window=len(considered),
+        empty_reading_count=sum(1 for reading in in_service if is_empty(reading)),
+        readings_in_window=len(in_service),
         duplicates=duplicates,
+        out_of_service=len(unique) - len(in_service),
     )

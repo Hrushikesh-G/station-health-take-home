@@ -164,3 +164,21 @@ def test_duplicates_do_not_inflate_the_empty_count() -> None:
     assert result.empty_reading_count == 2
     assert result.duplicates == 1
     assert not result.starved
+
+
+# --- DQ-02: out-of-service readings are excluded ----------------------------
+
+
+def test_out_of_service_readings_are_excluded_and_counted() -> None:
+    readings = [
+        reading("2026-09-15T08:00:00+00:00", bikes=0, docks=0, reading_id=1),
+        reading("2026-09-15T08:15:00+00:00", bikes=0, docks=0, reading_id=2),
+        reading("2026-09-15T08:30:00+00:00", bikes=0, docks=0, reading_id=3),
+    ]
+
+    result = evaluate_starvation(readings, METRO, DAY)
+
+    assert result.empty_reading_count == 0
+    assert result.readings_in_window == 0
+    assert result.out_of_service == 3
+    assert not result.starved

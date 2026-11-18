@@ -14,6 +14,7 @@ class PeakWindowOut(BaseModel):
 
 class ExcludedReadings(BaseModel):
     duplicates: int
+    out_of_service: int
 
 
 class StarvationResponse(BaseModel):
