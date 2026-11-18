@@ -76,3 +76,8 @@ def parse_utc(value: str) -> datetime:
 def readings_in_window(readings: Iterable[Reading], window: PeakWindow) -> list[Reading]:
     """Readings whose timestamp falls in ``[window.start, window.end)``."""
     return [reading for reading in readings if window.contains(parse_utc(reading.recorded_at))]
+
+
+def is_empty(reading: Reading) -> bool:
+    """A reading is empty when no bikes are available to start a journey."""
+    return reading.bikes_available == 0

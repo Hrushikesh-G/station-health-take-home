@@ -6,6 +6,7 @@ from station_health.starvation import (
     OperatorConfig,
     PeakWindow,
     Reading,
+    is_empty,
     parse_utc,
     peak_window_for,
     readings_in_window,
@@ -70,3 +71,14 @@ def test_readings_just_outside_the_window_or_on_other_dates_are_ignored() -> Non
 
 def test_parse_utc_returns_aware_utc_datetimes() -> None:
     assert parse_utc("2026-09-15T08:15:00+00:00") == utc(8, 15)
+
+
+# --- FR-05: an empty reading has zero bikes ---------------------------------
+
+
+def test_a_reading_with_zero_bikes_is_empty() -> None:
+    assert is_empty(reading("2026-09-15T08:00:00+00:00", bikes=0))
+
+
+def test_a_reading_with_any_bikes_is_not_empty() -> None:
+    assert not is_empty(reading("2026-09-15T08:00:00+00:00", bikes=1))
