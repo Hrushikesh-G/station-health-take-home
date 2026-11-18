@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import time
+from datetime import date, time
 from pathlib import Path
 
 import pytest
 
 from station_health.dependencies import Settings, get_settings, open_connection
-from station_health.repository import get_operator_config
-from station_health.starvation import OperatorConfig
+from station_health.repository import get_operator_config, get_readings
+from station_health.starvation import OperatorConfig, peak_window_for, readings_in_window
 from station_health.supplied import DATABASE_PATH
 
 
@@ -46,3 +46,25 @@ def test_each_operator_loads_its_own_configuration(
 ) -> None:
     with open_connection(database_path) as connection:
         assert get_operator_config(connection, operator_id) == expected
+
+
+# --- FR-04: candidate readings around the window ----------------------------
+
+
+def test_get_readings_returns_every_candidate_for_the_window(database_path: Path) -> None:
+    with open_connection(database_path) as connection:
+        config = get_operator_config(connection, 1)
+        window = peak_window_for(config, date(2026, 9, 15))
+        candidates = get_readings(connection, 101, window)
+
+    # All 8 rows for station 101 fall within the widened bounds, including
+    # the 2026-09-14 reading; the exact filter keeps the 5 inside 08:00-10:00.
+    assert len(candidates) == 8
+    assert {reading.station_id for reading in candidates} == {101}
+    assert [r.recorded_at[11:16] for r in readings_in_window(candidates, window)] == [
+        "08:00",
+        "08:15",
+        "08:30",
+        "08:45",
+        "09:00",
+    ]

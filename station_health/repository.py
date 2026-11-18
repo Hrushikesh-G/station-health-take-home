@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 
-from station_health.starvation import OperatorConfig
+from station_health.starvation import OperatorConfig, PeakWindow, Reading
 
 
 def get_operator_config(connection: sqlite3.Connection, operator_id: int) -> OperatorConfig:
@@ -24,3 +25,27 @@ def get_operator_config(connection: sqlite3.Connection, operator_id: int) -> Ope
         row["peak_end"],
         row["min_empty_readings"],
     )
+
+
+def get_readings(
+    connection: sqlite3.Connection, station_id: int, window: PeakWindow
+) -> list[Reading]:
+    """Candidate readings for ``window``; the exact filter is applied in Python.
+
+    ``recorded_at`` is TEXT, so the bounds are compared as strings. They are
+    widened by a day on each side: a UTC offset is always under 24 hours, so
+    every row whose instant could fall inside the window is returned, and the
+    (station_id, recorded_at) index is still used.
+    """
+    lower = (window.start.date() - timedelta(days=1)).isoformat()
+    upper = (window.end.date() + timedelta(days=2)).isoformat()
+    rows = connection.execute(
+        """
+        SELECT id, station_id, recorded_at, bikes_available, docks_total
+        FROM dock_readings
+        WHERE station_id = ? AND recorded_at >= ? AND recorded_at < ?
+        ORDER BY id
+        """,
+        (station_id, lower, upper),
+    ).fetchall()
+    return [Reading(**dict(row)) for row in rows]
