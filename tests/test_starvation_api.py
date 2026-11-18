@@ -65,6 +65,7 @@ def test_response_includes_the_supporting_count_and_the_rule_applied(
             "start": "2026-09-15T08:00:00Z",
             "end": "2026-09-15T10:00:00Z",
         },
+        "data_status": "ok",
         "readings_in_window": 5,
         "excluded_readings": {"duplicates": 0, "out_of_service": 0},
     }
@@ -156,3 +157,19 @@ def test_station_with_no_docks_is_not_reported_as_starved(client: TestClient) ->
     assert body["empty_reading_count"] == 0
     assert body["readings_in_window"] == 0
     assert body["excluded_readings"]["out_of_service"] == 3
+
+
+# --- DQ-03: a day without readings is reported as "no data" -----------------
+
+
+def test_day_without_readings_is_reported_as_no_data(client: TestClient) -> None:
+    body = check(client, 101, METRO, date="2026-01-01").json()
+
+    assert body["starved"] is False
+    assert body["empty_reading_count"] == 0
+    assert body["readings_in_window"] == 0
+    assert body["data_status"] == "no_data"
+
+
+def test_day_with_readings_is_reported_as_ok(client: TestClient) -> None:
+    assert check(client, 102, METRO).json()["data_status"] == "ok"

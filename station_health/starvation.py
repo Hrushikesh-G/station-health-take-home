@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
+from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,13 @@ def is_empty(reading: Reading) -> bool:
     return reading.bikes_available == 0
 
 
+class DataStatus(str, Enum):
+    """Whether the result rests on data, so "not starved" is never ambiguous."""
+
+    OK = "ok"
+    NO_DATA = "no_data"
+
+
 @dataclass(frozen=True)
 class StarvationResult:
     window: PeakWindow
@@ -115,6 +123,7 @@ class StarvationResult:
     readings_in_window: int
     duplicates: int
     out_of_service: int
+    data_status: DataStatus
 
     @property
     def starved(self) -> bool:
@@ -135,4 +144,5 @@ def evaluate_starvation(
         readings_in_window=len(in_service),
         duplicates=duplicates,
         out_of_service=len(unique) - len(in_service),
+        data_status=DataStatus.OK if unique else DataStatus.NO_DATA,
     )

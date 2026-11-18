@@ -6,6 +6,8 @@ import datetime as dt
 
 from pydantic import BaseModel
 
+from station_health.starvation import DataStatus
+
 
 class PeakWindowOut(BaseModel):
     start: dt.datetime
@@ -24,5 +26,6 @@ class StarvationResponse(BaseModel):
     empty_reading_count: int
     min_empty_readings: int
     peak_window: PeakWindowOut
+    data_status: DataStatus
     readings_in_window: int
     excluded_readings: ExcludedReadings

@@ -47,6 +47,7 @@ def get_station_starvation(
         empty_reading_count=result.empty_reading_count,
         min_empty_readings=result.min_empty_readings,
         peak_window=PeakWindowOut(start=result.window.start, end=result.window.end),
+        data_status=result.data_status,
         readings_in_window=result.readings_in_window,
         excluded_readings=ExcludedReadings(
             duplicates=result.duplicates,

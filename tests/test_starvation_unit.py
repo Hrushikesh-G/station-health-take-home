@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timezone
 import pytest
 
 from station_health.starvation import (
+    DataStatus,
     OperatorConfig,
     PeakWindow,
     Reading,
@@ -181,4 +182,15 @@ def test_out_of_service_readings_are_excluded_and_counted() -> None:
     assert result.empty_reading_count == 0
     assert result.readings_in_window == 0
     assert result.out_of_service == 3
+    assert not result.starved
+
+
+# --- DQ-03: no readings is "no data", not "healthy" -------------------------
+
+
+def test_no_readings_in_the_window_is_no_data() -> None:
+    result = evaluate_starvation([reading("2026-09-15T11:00:00+00:00")], METRO, DAY)
+
+    assert result.data_status is DataStatus.NO_DATA
+    assert result.readings_in_window == 0
     assert not result.starved
