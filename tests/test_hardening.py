@@ -210,3 +210,50 @@ def test_openapi_documents_the_endpoint_and_its_errors(client: TestClient) -> No
     assert schema["components"]["securitySchemes"]["OperatorToken"]["scheme"] == "bearer"
     data_status = schema["components"]["schemas"]["DataStatus"]
     assert data_status["enum"] == ["ok", "no_data", "out_of_service"]
+
+
+# --- NFR-15: logs carry context but never secrets ---------------------------
+
+
+def test_tokens_never_appear_in_any_log_record(
+    client: TestClient, database_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Trigger every warning and error path alongside good and bad credentials.
+    execute(
+        database_path,
+        "INSERT INTO dock_readings (station_id, recorded_at, bikes_available, docks_total) "
+        "VALUES (101, '2026-09-15T25:00:00+00:00', 0, 12), "
+        "(101, '2026-09-15T08:15:00+00:00', 6, 12)",
+    )
+    requests = [
+        {"Authorization": "Bearer metro-token"},
+        {"Authorization": "Bearer harbour-token"},
+        {"Authorization": "Bearer guessed-secret-token"},
+        {"Authorization": "Basic metro-token"},
+    ]
+
+    with caplog.at_level(logging.DEBUG):
+        for headers in requests:
+            client.get("/stations/101/starvation", params={"date": SEED_DATE}, headers=headers)
+        execute(database_path, "DELETE FROM operator_configs WHERE operator_id = 1")
+        client.get("/stations/101/starvation", params={"date": SEED_DATE}, headers=METRO)
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "unparseable recorded_at" in logged
+    assert "Conflicting duplicate readings" in logged
+    assert "Cannot evaluate starvation" in logged
+    for secret in ("metro-token", "harbour-token", "guessed-secret-token"):
+        assert secret not in logged
+
+
+def test_service_logs_share_one_namespace(
+    client: TestClient, database_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    execute(database_path, "DELETE FROM operator_configs WHERE operator_id = 1")
+
+    with caplog.at_level(logging.DEBUG):
+        client.get("/stations/101/starvation", params={"date": SEED_DATE}, headers=METRO)
+
+    service_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert service_records
+    assert all(r.name.startswith("station_health.") for r in service_records)
