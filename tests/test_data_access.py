@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from station_health.dependencies import Settings, get_settings, open_connection
-from station_health.repository import get_operator_config, get_readings
+from station_health.repository import find_operator_station, get_operator_config, get_readings
 from station_health.starvation import OperatorConfig, peak_window_for, readings_in_window
 from station_health.supplied import DATABASE_PATH
 
@@ -68,3 +68,24 @@ def test_get_readings_returns_every_candidate_for_the_window(database_path: Path
         "08:45",
         "09:00",
     ]
+
+
+# --- FR-08: stations are only visible to their operator ---------------------
+
+
+@pytest.mark.parametrize(
+    ("operator_id", "station_id", "visible"),
+    [
+        (1, 101, True),
+        (1, 104, True),
+        (1, 201, False),
+        (2, 201, True),
+        (2, 101, False),
+        (1, 999, False),
+    ],
+)
+def test_find_operator_station_is_scoped_to_the_operator(
+    database_path: Path, operator_id: int, station_id: int, visible: bool
+) -> None:
+    with open_connection(database_path) as connection:
+        assert find_operator_station(connection, operator_id, station_id) is visible

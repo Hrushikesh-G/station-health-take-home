@@ -8,6 +8,21 @@ from datetime import timedelta
 from station_health.starvation import OperatorConfig, PeakWindow, Reading
 
 
+def find_operator_station(
+    connection: sqlite3.Connection, operator_id: int, station_id: int
+) -> bool:
+    """True only if the station exists *and* belongs to the operator.
+
+    Ownership is part of the WHERE clause, so a station owned by another
+    operator is indistinguishable from one that does not exist.
+    """
+    row = connection.execute(
+        "SELECT 1 FROM stations WHERE id = ? AND operator_id = ?",
+        (station_id, operator_id),
+    ).fetchone()
+    return row is not None
+
+
 def get_operator_config(connection: sqlite3.Connection, operator_id: int) -> OperatorConfig:
     row = connection.execute(
         """
