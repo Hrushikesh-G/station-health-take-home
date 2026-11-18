@@ -177,3 +177,55 @@ def test_day_without_readings_is_reported_as_no_data(client: TestClient) -> None
 
 def test_day_with_readings_is_reported_as_ok(client: TestClient) -> None:
     assert check(client, 102, METRO).json()["data_status"] == "ok"
+
+
+# --- NFR-01: every seeded station gives the expected result -----------------
+# Mirrors section 4.2 of the functional design. Four of the six stations
+# contain a trap that a naive count gets wrong.
+
+SEED_EXPECTATIONS = [
+    # station, headers, starved, empty, in window, duplicates, out of service, status
+    (101, METRO, True, 3, 5, 0, 0, "ok"),  # 07:45, 10:00 and 2026-09-14 excluded
+    (102, METRO, False, 2, 4, 0, 0, "ok"),  # baseline
+    (103, METRO, False, 0, 0, 0, 3, "out_of_service"),  # docks_total = 0
+    (104, METRO, False, 2, 3, 1, 0, "ok"),  # duplicate 08:00 row
+    (201, HARBOUR, True, 2, 3, 0, 0, "ok"),  # Harbour's own window and threshold
+    (202, HARBOUR, False, 1, 2, 0, 0, "ok"),  # one below Harbour's threshold
+]
+
+
+@pytest.mark.parametrize(
+    "station_id,headers,starved,empty,in_window,duplicates,out_of_service,status",
+    SEED_EXPECTATIONS,
+    ids=[str(row[0]) for row in SEED_EXPECTATIONS],
+)
+def test_seed_data_produces_the_expected_result(
+    client: TestClient,
+    station_id: int,
+    headers: dict[str, str],
+    starved: bool,
+    empty: int,
+    in_window: int,
+    duplicates: int,
+    out_of_service: int,
+    status: str,
+) -> None:
+    response = check(client, station_id, headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["starved"] is starved
+    assert body["empty_reading_count"] == empty
+    assert body["readings_in_window"] == in_window
+    assert body["excluded_readings"] == {
+        "duplicates": duplicates,
+        "out_of_service": out_of_service,
+    }
+    assert body["data_status"] == status
+
+
+def test_previous_day_is_evaluated_on_its_own_readings(client: TestClient) -> None:
+    body = check(client, 101, METRO, date="2026-09-14").json()
+
+    assert body["starved"] is False
+    assert body["empty_reading_count"] == 1
