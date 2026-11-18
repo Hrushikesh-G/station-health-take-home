@@ -31,6 +31,9 @@ def get_station_starvation(
 ) -> StarvationResponse:
     """Report whether the station met its operator's starvation rule on ``date``."""
     with open_connection(settings.database_path) as connection:
+        # One scoped query and one response for "missing" and "another
+        # operator's": callers cannot learn whether a foreign station exists.
+        # Nothing else about the station is read before this check passes.
         if not find_operator_station(connection, operator_id, station_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, STATION_NOT_FOUND)
         config = get_operator_config(connection, operator_id)

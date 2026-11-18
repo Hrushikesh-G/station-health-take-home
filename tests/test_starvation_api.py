@@ -85,3 +85,29 @@ def test_station_below_threshold_reports_its_count(client: TestClient) -> None:
     assert body["starved"] is False
     assert body["empty_reading_count"] == 2
     assert body["readings_in_window"] == 4
+
+
+# --- FR-08 / FR-09: tenant isolation without disclosing existence -----------
+
+
+def test_another_operators_station_is_not_found(client: TestClient) -> None:
+    response = check(client, 201, METRO)
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Station not found"}
+
+
+def test_isolation_holds_in_both_directions(client: TestClient) -> None:
+    assert check(client, 101, HARBOUR).status_code == 404
+
+
+def test_foreign_and_missing_stations_get_byte_identical_responses(
+    client: TestClient,
+) -> None:
+    foreign = check(client, 201, METRO)
+    missing = check(client, 999, METRO)
+
+    assert foreign.status_code == missing.status_code == 404
+    assert foreign.content == missing.content
+    assert foreign.headers.get("content-type") == missing.headers.get("content-type")
+    assert foreign.headers.get("content-length") == missing.headers.get("content-length")
