@@ -6,10 +6,13 @@ can be unit tested and changed in isolation.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,7 +85,9 @@ def readings_in_window(readings: Iterable[Reading], window: PeakWindow) -> list[
 def deduplicate(readings: Iterable[Reading]) -> tuple[list[Reading], int]:
     """Keep one reading per instant: the latest row (highest id) wins.
 
-    Returns the kept readings and how many duplicates were dropped.
+    Instants are compared after conversion to UTC, so ``08:00:00Z`` and
+    ``08:00:00+00:00`` are the same reading. Duplicates that disagree are
+    logged. Returns the kept readings and how many duplicates were dropped.
     """
     latest: dict[datetime, Reading] = {}
     duplicates = 0
@@ -93,9 +98,22 @@ def deduplicate(readings: Iterable[Reading]) -> tuple[list[Reading], int]:
             latest[instant] = reading
             continue
         duplicates += 1
+        if _values(reading) != _values(current):
+            logger.warning(
+                "Conflicting duplicate readings for station %s at %s (rows %s and %s); "
+                "keeping the highest id",
+                reading.station_id,
+                instant.isoformat(),
+                min(reading.id, current.id),
+                max(reading.id, current.id),
+            )
         if reading.id > current.id:
             latest[instant] = reading
     return list(latest.values()), duplicates
+
+
+def _values(reading: Reading) -> tuple[int, int]:
+    return reading.bikes_available, reading.docks_total
 
 
 def is_out_of_service(reading: Reading) -> bool:

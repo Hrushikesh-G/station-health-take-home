@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timezone
 
 import pytest
@@ -213,3 +214,38 @@ def test_partly_out_of_service_window_is_ok_with_exclusions_reported() -> None:
     assert result.readings_in_window == 2
     assert result.out_of_service == 1
     assert result.empty_reading_count == 1
+
+
+# --- NFR-07: deterministic duplicate resolution -----------------------------
+
+
+def test_same_instant_in_different_utc_notations_is_one_reading() -> None:
+    zulu = reading("2026-09-15T08:00:00Z", reading_id=1)
+    offset = reading("2026-09-15T08:00:00+00:00", reading_id=2)
+
+    kept, duplicates = deduplicate([zulu, offset])
+
+    assert kept == [offset]
+    assert duplicates == 1
+
+
+def test_conflicting_duplicates_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    older = reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=7)
+    newer = reading("2026-09-15T08:00:00+00:00", bikes=4, reading_id=9)
+
+    with caplog.at_level(logging.WARNING, logger="station_health"):
+        kept, _ = deduplicate([newer, older])
+
+    assert kept == [newer]
+    [record] = caplog.records
+    assert "station 101" in record.getMessage()
+    assert "rows 7 and 9" in record.getMessage()
+
+
+def test_identical_duplicates_are_not_logged(caplog: pytest.LogCaptureFixture) -> None:
+    same = [reading("2026-09-15T08:00:00+00:00", reading_id=i) for i in (1, 2)]
+
+    with caplog.at_level(logging.WARNING, logger="station_health"):
+        deduplicate(same)
+
+    assert caplog.records == []
