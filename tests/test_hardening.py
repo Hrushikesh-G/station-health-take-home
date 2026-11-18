@@ -193,3 +193,20 @@ def test_authentication_runs_before_input_validation(client: TestClient) -> None
     )
 
     assert response.status_code == 401
+
+
+# --- NFR-14: the API contract is documented in OpenAPI ----------------------
+
+
+def test_openapi_documents_the_endpoint_and_its_errors(client: TestClient) -> None:
+    schema = client.get("/openapi.json").json()
+    operation = schema["paths"]["/stations/{station_id}/starvation"]["get"]
+
+    assert set(operation["responses"]) == {"200", "401", "404", "422", "500", "503"}
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/StarvationResponse"
+    }
+    assert operation["security"] == [{"OperatorToken": []}]
+    assert schema["components"]["securitySchemes"]["OperatorToken"]["scheme"] == "bearer"
+    data_status = schema["components"]["schemas"]["DataStatus"]
+    assert data_status["enum"] == ["ok", "no_data", "out_of_service"]

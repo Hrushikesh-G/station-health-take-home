@@ -5,9 +5,19 @@ from __future__ import annotations
 import hmac
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from station_health.supplied import TOKENS
+
+# Declares the Bearer scheme in OpenAPI so /docs offers "Authorize"; Swagger UI
+# ignores plain header parameters named Authorization. auto_error=False keeps
+# every failure on the single 401 below instead of FastAPI's default 403.
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="OperatorToken",
+    description="Operator token from the supplied mapping, e.g. `metro-token`.",
+)
 
 
 def _unauthenticated() -> HTTPException:
@@ -19,7 +29,7 @@ def _unauthenticated() -> HTTPException:
 
 
 def get_current_operator(
-    authorization: Annotated[str | None, Header()] = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> int:
     """Return the operator id for ``Authorization: Bearer <token>`` or raise 401.
 
@@ -27,8 +37,8 @@ def get_current_operator(
     constant time, and every failure produces the same response, so a caller
     learns nothing about why it was rejected. The header is never logged.
     """
-    scheme, _, token = (authorization or "").partition(" ")
-    operator_id = _operator_for(token.strip()) if scheme.lower() == "bearer" else None
+    token = credentials.credentials.strip() if credentials else ""
+    operator_id = _operator_for(token)
     if operator_id is None:
         raise _unauthenticated()
     return operator_id

@@ -1,9 +1,29 @@
+"""Tests for the authentication dependency, exercised through a minimal app."""
+
 from __future__ import annotations
 
+from typing import Annotated
+
 import pytest
-from fastapi import HTTPException
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
 from station_health.auth import get_current_operator
+
+probe = FastAPI()
+
+
+@probe.get("/whoami")
+def whoami(operator_id: Annotated[int, Depends(get_current_operator)]) -> dict[str, int]:
+    return {"operator_id": operator_id}
+
+
+def call(header: str | None):
+    headers = {} if header is None else {"Authorization": header}
+    return TestClient(probe).get("/whoami", headers=headers)
+
+
+# --- FR-01: authenticate with an operator bearer token ----------------------
 
 
 @pytest.mark.parametrize(
@@ -14,7 +34,10 @@ from station_health.auth import get_current_operator
     ],
 )
 def test_known_tokens_resolve_to_their_operator(header: str, operator_id: int) -> None:
-    assert get_current_operator(header) == operator_id
+    response = call(header)
+
+    assert response.status_code == 200
+    assert response.json() == {"operator_id": operator_id}
 
 
 @pytest.mark.parametrize(
@@ -30,12 +53,11 @@ def test_known_tokens_resolve_to_their_operator(header: str, operator_id: int) -
     ],
 )
 def test_missing_malformed_or_unknown_tokens_are_rejected(header: str | None) -> None:
-    with pytest.raises(HTTPException) as raised:
-        get_current_operator(header)
+    response = call(header)
 
-    assert raised.value.status_code == 401
-    assert raised.value.detail == "Not authenticated"
-    assert raised.value.headers == {"WWW-Authenticate": "Bearer"}
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Not authenticated"}
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 # --- NFR-13: hardened authentication ----------------------------------------
@@ -46,10 +68,9 @@ def test_missing_malformed_or_unknown_tokens_are_rejected(header: str | None) ->
     ["bearer metro-token", "BEARER metro-token", "Bearer  metro-token", "Bearer metro-token "],
 )
 def test_scheme_is_case_insensitive_and_surrounding_space_is_ignored(header: str) -> None:
-    assert get_current_operator(header) == 1
+    assert call(header).json() == {"operator_id": 1}
 
 
 @pytest.mark.parametrize("header", ["Bearer metro-token2", "Bearer metro", "Bearer METRO-TOKEN"])
 def test_tokens_must_match_exactly(header: str) -> None:
-    with pytest.raises(HTTPException):
-        get_current_operator(header)
+    assert call(header).status_code == 401

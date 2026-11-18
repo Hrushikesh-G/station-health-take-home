@@ -20,7 +20,12 @@ from station_health.repository import (
     get_operator_config,
     get_readings,
 )
-from station_health.schemas import ExcludedReadings, PeakWindowOut, StarvationResponse
+from station_health.schemas import (
+    ErrorResponse,
+    ExcludedReadings,
+    PeakWindowOut,
+    StarvationResponse,
+)
 from station_health.starvation import (
     InvalidOperatorConfig,
     OperatorConfig,
@@ -46,6 +51,22 @@ MAX_STATION_ID = 2**63 - 1
 DATE_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 
 
+def _error(description: str, detail: str) -> dict:
+    return {
+        "model": ErrorResponse,
+        "description": description,
+        "content": {"application/json": {"example": {"detail": detail}}},
+    }
+
+
+ERROR_RESPONSES: dict[int | str, dict] = {
+    401: _error("Missing, malformed or unknown bearer token", "Not authenticated"),
+    404: _error("Station does not exist or belongs to another operator", STATION_NOT_FOUND),
+    500: _error("The operator's configuration is missing or invalid", CONFIG_INVALID),
+    503: _error("The database has not been created; run `python seed.py`", DATABASE_UNAVAILABLE),
+}
+
+
 def parse_query_date(value: str) -> date:
     """Parse a strict ``YYYY-MM-DD`` date or raise 422.
 
@@ -68,9 +89,15 @@ def parse_query_date(value: str) -> date:
     return day
 
 
-@router.get("/stations/{station_id}/starvation", response_model=StarvationResponse)
+@router.get(
+    "/stations/{station_id}/starvation",
+    response_model=StarvationResponse,
+    responses=ERROR_RESPONSES,
+    summary="Check whether a station met the starvation rule on a date",
+    tags=["stations"],
+)
 def get_station_starvation(
-    station_id: Annotated[int, Path(ge=1, le=MAX_STATION_ID)],
+    station_id: Annotated[int, Path(ge=1, le=MAX_STATION_ID, description="Station id")],
     date_text: Annotated[
         str,
         Query(alias="date", pattern=DATE_PATTERN, description="Day to check, YYYY-MM-DD (UTC)"),
@@ -78,7 +105,12 @@ def get_station_starvation(
     operator_id: Annotated[int, Depends(get_current_operator)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> StarvationResponse:
-    """Report whether the station met its operator's starvation rule on ``date``."""
+    """Report whether the station met its operator's starvation rule on ``date``.
+
+    The station is starved when it has at least the operator's minimum number
+    of in-service readings with zero bikes inside the operator's UTC peak
+    window, start included and end excluded.
+    """
     day = parse_query_date(date_text)
     try:
         config, readings = _load_inputs(settings, operator_id, station_id, day)
