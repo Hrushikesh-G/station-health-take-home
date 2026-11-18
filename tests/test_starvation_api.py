@@ -159,6 +159,10 @@ def test_station_with_no_docks_is_not_reported_as_starved(client: TestClient) ->
     assert body["excluded_readings"]["out_of_service"] == 3
 
 
+def test_station_out_of_service_all_window_is_flagged(client: TestClient) -> None:
+    assert check(client, 103, METRO).json()["data_status"] == "out_of_service"
+
+
 # --- DQ-03: a day without readings is reported as "no data" -----------------
 
 

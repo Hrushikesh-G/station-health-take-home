@@ -113,6 +113,7 @@ class DataStatus(str, Enum):
 
     OK = "ok"
     NO_DATA = "no_data"
+    OUT_OF_SERVICE = "out_of_service"
 
 
 @dataclass(frozen=True)
@@ -144,5 +145,13 @@ def evaluate_starvation(
         readings_in_window=len(in_service),
         duplicates=duplicates,
         out_of_service=len(unique) - len(in_service),
-        data_status=DataStatus.OK if unique else DataStatus.NO_DATA,
+        data_status=_data_status(total=len(unique), in_service=len(in_service)),
     )
+
+
+def _data_status(total: int, in_service: int) -> DataStatus:
+    if total == 0:
+        return DataStatus.NO_DATA
+    if in_service == 0:
+        return DataStatus.OUT_OF_SERVICE
+    return DataStatus.OK

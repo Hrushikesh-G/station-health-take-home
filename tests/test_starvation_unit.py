@@ -182,6 +182,7 @@ def test_out_of_service_readings_are_excluded_and_counted() -> None:
     assert result.empty_reading_count == 0
     assert result.readings_in_window == 0
     assert result.out_of_service == 3
+    assert result.data_status is DataStatus.OUT_OF_SERVICE
     assert not result.starved
 
 
@@ -194,3 +195,21 @@ def test_no_readings_in_the_window_is_no_data() -> None:
     assert result.data_status is DataStatus.NO_DATA
     assert result.readings_in_window == 0
     assert not result.starved
+
+
+# --- NFR-06: data status distinguishes ok / no data / out of service --------
+
+
+def test_partly_out_of_service_window_is_ok_with_exclusions_reported() -> None:
+    readings = [
+        reading("2026-09-15T08:00:00+00:00", bikes=0, docks=0, reading_id=1),
+        reading("2026-09-15T08:15:00+00:00", bikes=0, docks=12, reading_id=2),
+        reading("2026-09-15T08:30:00+00:00", bikes=3, docks=12, reading_id=3),
+    ]
+
+    result = evaluate_starvation(readings, METRO, DAY)
+
+    assert result.data_status is DataStatus.OK
+    assert result.readings_in_window == 2
+    assert result.out_of_service == 1
+    assert result.empty_reading_count == 1
