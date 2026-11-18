@@ -9,7 +9,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from station_health.auth import get_current_operator
-from station_health.dependencies import Settings, get_settings, open_connection
+from station_health.dependencies import (
+    DatabaseUnavailable,
+    Settings,
+    get_settings,
+    open_connection,
+)
 from station_health.repository import (
     find_operator_station,
     get_operator_config,
@@ -18,6 +23,8 @@ from station_health.repository import (
 from station_health.schemas import ExcludedReadings, PeakWindowOut, StarvationResponse
 from station_health.starvation import (
     InvalidOperatorConfig,
+    OperatorConfig,
+    Reading,
     evaluate_starvation,
     peak_window_for,
 )
@@ -28,6 +35,7 @@ router = APIRouter()
 
 STATION_NOT_FOUND = "Station not found"
 CONFIG_INVALID = "Operator configuration invalid"
+DATABASE_UNAVAILABLE = "Database not initialised"
 
 # The window may end a day after ``date`` and the readings query widens it by
 # one more day on each side; these bounds keep every derived date representable.
@@ -72,22 +80,13 @@ def get_station_starvation(
 ) -> StarvationResponse:
     """Report whether the station met its operator's starvation rule on ``date``."""
     day = parse_query_date(date_text)
-    # Opened here rather than in a ``yield`` dependency: FastAPI may run a
-    # dependency's setup and teardown on different worker threads, and sqlite3
-    # connections refuse cross-thread use. This keeps the connection in one
-    # thread from open to close.
-    with open_connection(settings.database_path) as connection:
-        # One scoped query and one response for "missing" and "another
-        # operator's": callers cannot learn whether a foreign station exists.
-        # Nothing else about the station is read before this check passes.
-        if not find_operator_station(connection, operator_id, station_id):
-            raise HTTPException(status.HTTP_404_NOT_FOUND, STATION_NOT_FOUND)
-        try:
-            config = get_operator_config(connection, operator_id)
-        except InvalidOperatorConfig as exc:
-            logger.error("Cannot evaluate starvation: %s", exc)
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, CONFIG_INVALID) from exc
-        readings = get_readings(connection, station_id, peak_window_for(config, day))
+    try:
+        config, readings = _load_inputs(settings, operator_id, station_id, day)
+    except DatabaseUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, DATABASE_UNAVAILABLE) from exc
+    except InvalidOperatorConfig as exc:
+        logger.error("Cannot evaluate starvation: %s", exc)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, CONFIG_INVALID) from exc
 
     result = evaluate_starvation(readings, config, day)
     return StarvationResponse(
@@ -104,3 +103,21 @@ def get_station_starvation(
             out_of_service=result.out_of_service,
         ),
     )
+
+
+def _load_inputs(
+    settings: Settings, operator_id: int, station_id: int, day: date
+) -> tuple[OperatorConfig, list[Reading]]:
+    # Opened here rather than in a ``yield`` dependency: FastAPI may run a
+    # dependency's setup and teardown on different worker threads, and sqlite3
+    # connections refuse cross-thread use. This keeps the connection in one
+    # thread from open to close.
+    with open_connection(settings.database_path) as connection:
+        # One scoped query and one response for "missing" and "another
+        # operator's": callers cannot learn whether a foreign station exists.
+        # Nothing else about the station is read before this check passes.
+        if not find_operator_station(connection, operator_id, station_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, STATION_NOT_FOUND)
+        config = get_operator_config(connection, operator_id)
+        readings = get_readings(connection, station_id, peak_window_for(config, day))
+    return config, readings

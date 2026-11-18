@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from station_health.dependencies import Settings, get_settings, open_connection
+from station_health.dependencies import (
+    DatabaseUnavailable,
+    Settings,
+    get_settings,
+    open_connection,
+)
 from station_health.repository import find_operator_station, get_operator_config, get_readings
 from station_health.starvation import OperatorConfig, peak_window_for, readings_in_window
 from station_health.supplied import DATABASE_PATH
@@ -29,6 +34,16 @@ def test_open_connection_closes_the_connection_on_exit(database_path: Path) -> N
 
     with pytest.raises(sqlite3.ProgrammingError):
         connection.execute("SELECT 1")
+
+
+def test_open_connection_refuses_a_missing_file_without_creating_it(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.db"
+
+    with pytest.raises(DatabaseUnavailable):
+        with open_connection(missing):
+            pass
+
+    assert not missing.exists()
 
 
 # --- FR-03: operator configuration ------------------------------------------

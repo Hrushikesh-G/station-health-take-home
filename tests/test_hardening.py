@@ -10,6 +10,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from station_health.app import app
+from station_health.dependencies import Settings, get_settings
+
 METRO = {"Authorization": "Bearer metro-token"}
 SEED_DATE = "2026-09-15"
 
@@ -132,3 +135,23 @@ def test_concurrent_requests_all_succeed_with_identical_results(client: TestClie
 
     assert {status for status, _ in results} == {200}
     assert len({body for _, body in results}) == 1
+
+
+# --- NFR-12: a missing database is reported, never created ------------------
+
+
+def test_missing_database_returns_503_and_creates_no_file(
+    client: TestClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    missing = tmp_path / "not-seeded.db"
+    app.dependency_overrides[get_settings] = lambda: Settings(database_path=missing)
+
+    with caplog.at_level(logging.ERROR, logger="station_health"):
+        response = client.get(
+            "/stations/101/starvation", params={"date": SEED_DATE}, headers=METRO
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database not initialised"}
+    assert not missing.exists()
+    assert any("run `python seed.py`" in r.getMessage() for r in caplog.records)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -10,6 +11,12 @@ from pathlib import Path
 
 from station_health.db import connect
 from station_health.supplied import DATABASE_PATH
+
+logger = logging.getLogger(__name__)
+
+
+class DatabaseUnavailable(RuntimeError):
+    """The SQLite database file does not exist (``python seed.py`` not run)."""
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,13 @@ def open_connection(path: Path) -> Iterator[sqlite3.Connection]:
 
     Use it inside a synchronous request handler, never from a ``yield``
     dependency, so the connection is created, used and closed in one thread.
+
+    Raises ``DatabaseUnavailable`` when the file is missing: ``sqlite3.connect``
+    would otherwise create an empty database and every query would fail with
+    "no such table".
     """
+    if not Path(path).is_file():
+        logger.error("Database file not found at %s; run `python seed.py`", path)
+        raise DatabaseUnavailable(str(path))
     with contextlib.closing(connect(path)) as connection:
         yield connection
