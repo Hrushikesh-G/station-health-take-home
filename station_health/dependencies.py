@@ -28,6 +28,9 @@ def open_connection(path: Path) -> Iterator[sqlite3.Connection]:
 
     ``with sqlite3.connect(...)`` only commits or rolls back; it does not close
     the connection, so ``contextlib.closing`` is used explicitly.
+
+    Use it inside a synchronous request handler, never from a ``yield``
+    dependency, so the connection is created, used and closed in one thread.
     """
     with contextlib.closing(connect(path)) as connection:
         yield connection

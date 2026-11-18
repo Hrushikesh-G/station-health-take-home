@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -112,3 +113,22 @@ def test_dates_outside_the_supported_range_are_rejected(client: TestClient, date
 @pytest.mark.parametrize("date", ["0001-01-02", "9999-12-28"])
 def test_supported_range_edges_are_accepted(client: TestClient, date: str) -> None:
     assert starvation(client, date=date)["data_status"] == "no_data"
+
+
+# --- NFR-11: connections never cross threads --------------------------------
+
+
+def test_concurrent_requests_all_succeed_with_identical_results(client: TestClient) -> None:
+    # With a connection handed out by a yield dependency, 196 of 200 such
+    # requests failed with cross-thread SQLite errors.
+    def fetch(_: int) -> tuple[int, bytes]:
+        response = client.get(
+            "/stations/101/starvation", params={"date": SEED_DATE}, headers=METRO
+        )
+        return response.status_code, response.content
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(fetch, range(200)))
+
+    assert {status for status, _ in results} == {200}
+    assert len({body for _, body in results}) == 1

@@ -72,6 +72,10 @@ def get_station_starvation(
 ) -> StarvationResponse:
     """Report whether the station met its operator's starvation rule on ``date``."""
     day = parse_query_date(date_text)
+    # Opened here rather than in a ``yield`` dependency: FastAPI may run a
+    # dependency's setup and teardown on different worker threads, and sqlite3
+    # connections refuse cross-thread use. This keeps the connection in one
+    # thread from open to close.
     with open_connection(settings.database_path) as connection:
         # One scoped query and one response for "missing" and "another
         # operator's": callers cannot learn whether a foreign station exists.
