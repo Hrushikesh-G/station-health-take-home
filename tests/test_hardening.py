@@ -155,3 +155,41 @@ def test_missing_database_returns_503_and_creates_no_file(
     assert response.json() == {"detail": "Database not initialised"}
     assert not missing.exists()
     assert any("run `python seed.py`" in r.getMessage() for r in caplog.records)
+
+
+# --- NFR-13: every authentication failure looks the same --------------------
+
+
+def test_all_authentication_failures_get_an_identical_response(client: TestClient) -> None:
+    headers = [
+        {},
+        {"Authorization": "Bearer unknown-token"},
+        {"Authorization": "Basic metro-token"},
+        {"Authorization": "Bearer "},
+    ]
+    responses = [
+        client.get("/stations/101/starvation", params={"date": SEED_DATE}, headers=h)
+        for h in headers
+    ]
+
+    assert {r.status_code for r in responses} == {401}
+    assert len({r.content for r in responses}) == 1
+    assert {r.headers["www-authenticate"] for r in responses} == {"Bearer"}
+
+
+def test_lower_case_scheme_is_accepted_end_to_end(client: TestClient) -> None:
+    response = client.get(
+        "/stations/101/starvation",
+        params={"date": SEED_DATE},
+        headers={"Authorization": "bearer metro-token"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_authentication_runs_before_input_validation(client: TestClient) -> None:
+    response = client.get(
+        "/stations/abc/starvation", params={"date": "not-a-date"}, headers={}
+    )
+
+    assert response.status_code == 401

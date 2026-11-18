@@ -36,3 +36,20 @@ def test_missing_malformed_or_unknown_tokens_are_rejected(header: str | None) ->
     assert raised.value.status_code == 401
     assert raised.value.detail == "Not authenticated"
     assert raised.value.headers == {"WWW-Authenticate": "Bearer"}
+
+
+# --- NFR-13: hardened authentication ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["bearer metro-token", "BEARER metro-token", "Bearer  metro-token", "Bearer metro-token "],
+)
+def test_scheme_is_case_insensitive_and_surrounding_space_is_ignored(header: str) -> None:
+    assert get_current_operator(header) == 1
+
+
+@pytest.mark.parametrize("header", ["Bearer metro-token2", "Bearer metro", "Bearer METRO-TOKEN"])
+def test_tokens_must_match_exactly(header: str) -> None:
+    with pytest.raises(HTTPException):
+        get_current_operator(header)
