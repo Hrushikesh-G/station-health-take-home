@@ -78,6 +78,25 @@ def readings_in_window(readings: Iterable[Reading], window: PeakWindow) -> list[
     return [reading for reading in readings if window.contains(parse_utc(reading.recorded_at))]
 
 
+def deduplicate(readings: Iterable[Reading]) -> tuple[list[Reading], int]:
+    """Keep one reading per instant: the latest row (highest id) wins.
+
+    Returns the kept readings and how many duplicates were dropped.
+    """
+    latest: dict[datetime, Reading] = {}
+    duplicates = 0
+    for reading in readings:
+        instant = parse_utc(reading.recorded_at)
+        current = latest.get(instant)
+        if current is None:
+            latest[instant] = reading
+            continue
+        duplicates += 1
+        if reading.id > current.id:
+            latest[instant] = reading
+    return list(latest.values()), duplicates
+
+
 def is_empty(reading: Reading) -> bool:
     """A reading is empty when no bikes are available to start a journey."""
     return reading.bikes_available == 0
@@ -89,6 +108,7 @@ class StarvationResult:
     min_empty_readings: int
     empty_reading_count: int
     readings_in_window: int
+    duplicates: int
 
     @property
     def starved(self) -> bool:
@@ -100,10 +120,11 @@ def evaluate_starvation(
 ) -> StarvationResult:
     """Apply the operator's starvation rule to one station's readings for ``day``."""
     window = peak_window_for(config, day)
-    considered = readings_in_window(readings, window)
+    considered, duplicates = deduplicate(readings_in_window(readings, window))
     return StarvationResult(
         window=window,
         min_empty_readings=config.min_empty_readings,
         empty_reading_count=sum(1 for reading in considered if is_empty(reading)),
         readings_in_window=len(considered),
+        duplicates=duplicates,
     )

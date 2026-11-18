@@ -12,6 +12,10 @@ class PeakWindowOut(BaseModel):
     end: dt.datetime
 
 
+class ExcludedReadings(BaseModel):
+    duplicates: int
+
+
 class StarvationResponse(BaseModel):
     station_id: int
     date: dt.date
@@ -20,3 +24,4 @@ class StarvationResponse(BaseModel):
     min_empty_readings: int
     peak_window: PeakWindowOut
     readings_in_window: int
+    excluded_readings: ExcludedReadings

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
 
+import pytest
+
 from station_health.starvation import (
     OperatorConfig,
     PeakWindow,
     Reading,
+    deduplicate,
     evaluate_starvation,
     is_empty,
     parse_utc,
@@ -122,3 +125,42 @@ def test_only_empty_readings_inside_the_window_are_counted() -> None:
     assert result.readings_in_window == 2
     assert result.empty_reading_count == 1
     assert result.window == PeakWindow(start=utc(8), end=utc(10))
+
+
+# --- DQ-01: one reading per instant -----------------------------------------
+
+
+def test_duplicates_are_dropped_and_counted() -> None:
+    first = reading("2026-09-15T08:00:00+00:00", reading_id=1)
+    second = reading("2026-09-15T08:00:00+00:00", reading_id=2)
+    other = reading("2026-09-15T08:15:00+00:00", reading_id=3)
+
+    kept, duplicates = deduplicate([first, second, other])
+
+    assert kept == [second, other]
+    assert duplicates == 1
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_highest_id_wins_regardless_of_input_order(order: tuple[int, int]) -> None:
+    older = reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=7)
+    newer = reading("2026-09-15T08:00:00+00:00", bikes=4, reading_id=9)
+    candidates = [older, newer]
+
+    kept, _ = deduplicate([candidates[i] for i in order])
+
+    assert kept == [newer]
+
+
+def test_duplicates_do_not_inflate_the_empty_count() -> None:
+    readings = [
+        reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=1),
+        reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=2),
+        reading("2026-09-15T08:15:00+00:00", bikes=0, reading_id=3),
+    ]
+
+    result = evaluate_starvation(readings, METRO, DAY)
+
+    assert result.empty_reading_count == 2
+    assert result.duplicates == 1
+    assert not result.starved

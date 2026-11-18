@@ -66,6 +66,7 @@ def test_response_includes_the_supporting_count_and_the_rule_applied(
             "end": "2026-09-15T10:00:00Z",
         },
         "readings_in_window": 5,
+        "excluded_readings": {"duplicates": 0},
     }
 
 
@@ -128,3 +129,17 @@ def test_malformed_dates_are_rejected(client: TestClient, bad_date: str) -> None
 
 def test_non_integer_station_id_is_rejected(client: TestClient) -> None:
     assert check(client, "abc", METRO).status_code == 422
+
+
+# --- DQ-01: duplicate readings do not inflate the count ---------------------
+
+
+def test_duplicate_reading_is_counted_once(client: TestClient) -> None:
+    body = check(client, 104, METRO).json()
+
+    # Station 104 has two identical 08:00 rows; counting both would give 3
+    # empty readings and a false "starved".
+    assert body["starved"] is False
+    assert body["empty_reading_count"] == 2
+    assert body["readings_in_window"] == 3
+    assert body["excluded_readings"]["duplicates"] == 1
