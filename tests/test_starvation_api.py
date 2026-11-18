@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
@@ -111,3 +112,19 @@ def test_foreign_and_missing_stations_get_byte_identical_responses(
     assert foreign.content == missing.content
     assert foreign.headers.get("content-type") == missing.headers.get("content-type")
     assert foreign.headers.get("content-length") == missing.headers.get("content-length")
+
+
+# --- FR-10: invalid input is rejected with 422 ------------------------------
+
+
+def test_missing_date_is_rejected(client: TestClient) -> None:
+    assert check(client, 101, METRO, date=None).status_code == 422
+
+
+@pytest.mark.parametrize("bad_date", ["2026-02-30", "2026-9-15", "15-09-2026", "yesterday", ""])
+def test_malformed_dates_are_rejected(client: TestClient, bad_date: str) -> None:
+    assert check(client, 101, METRO, date=bad_date).status_code == 422
+
+
+def test_non_integer_station_id_is_rejected(client: TestClient) -> None:
+    assert check(client, "abc", METRO).status_code == 422

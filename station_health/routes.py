@@ -25,7 +25,7 @@ STATION_NOT_FOUND = "Station not found"
 @router.get("/stations/{station_id}/starvation", response_model=StarvationResponse)
 def get_station_starvation(
     station_id: int,
-    day: Annotated[date, Query(alias="date")],
+    day: Annotated[date, Query(alias="date", description="Day to check, YYYY-MM-DD (UTC)")],
     operator_id: Annotated[int, Depends(get_current_operator)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> StarvationResponse:
