@@ -1,3 +1,11 @@
+"""Unit tests for the starvation rule in station_health/starvation.py.
+
+These tests need no database and no web server: they build Reading objects
+by hand and pass them straight to the rule's functions. That makes them fast
+and makes each edge case easy to see. Sections are labelled with the
+requirement ID they prove (see the functional design document).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -19,18 +27,21 @@ from station_health.starvation import (
     readings_in_window,
 )
 
+# Shared test values: the seed date and MetroCycle's rule (08:00-10:00, min 3).
 UTC = timezone.utc
 DAY = date(2026, 9, 15)
 METRO = OperatorConfig(operator_id=1, peak_start=time(8), peak_end=time(10), min_empty_readings=3)
 
 
 def utc(hour: int, minute: int = 0, day: date = DAY) -> datetime:
+    """A UTC datetime on DAY (or another day), e.g. utc(8, 15) is 08:15 UTC."""
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=UTC)
 
 
 def reading(
     recorded_at: str, bikes: int = 0, docks: int = 12, reading_id: int = 1
 ) -> Reading:
+    """Build a reading for station 101. Defaults: empty (0 bikes), in service."""
     return Reading(
         id=reading_id,
         station_id=101,
@@ -44,12 +55,14 @@ def reading(
 
 
 def test_config_from_row_parses_peak_times() -> None:
+    # Stored text "07:30" becomes a real time value.
     config = OperatorConfig.from_row(2, "07:30", "09:30", 2)
 
     assert config == OperatorConfig(2, time(7, 30), time(9, 30), 2)
 
 
 def test_peak_window_is_built_in_utc_on_the_requested_date() -> None:
+    # 08:00-10:00 on 2026-09-15 becomes 2026-09-15 08:00 UTC to 10:00 UTC.
     assert peak_window_for(METRO, DAY) == PeakWindow(start=utc(8), end=utc(10))
 
 
@@ -61,18 +74,20 @@ def test_window_includes_its_start_and_excludes_its_end() -> None:
     at_start = reading("2026-09-15T08:00:00+00:00", reading_id=1)
     at_end = reading("2026-09-15T10:00:00+00:00", reading_id=2)
 
+    # 08:00 is inside the window; 10:00 is the excluded end.
     assert readings_in_window([at_start, at_end], window) == [at_start]
 
 
 def test_readings_just_outside_the_window_or_on_other_dates_are_ignored() -> None:
     window = peak_window_for(METRO, DAY)
     candidates = [
-        reading("2026-09-15T07:59:59+00:00"),
-        reading("2026-09-15T09:59:59+00:00"),
-        reading("2026-09-14T08:15:00+00:00"),
-        reading("2026-09-16T08:15:00+00:00"),
+        reading("2026-09-15T07:59:59+00:00"),  # one second before the start
+        reading("2026-09-15T09:59:59+00:00"),  # one second before the end: inside
+        reading("2026-09-14T08:15:00+00:00"),  # previous day
+        reading("2026-09-16T08:15:00+00:00"),  # next day
     ]
 
+    # Only the 09:59:59 reading survives.
     assert readings_in_window(candidates, window) == [candidates[1]]
 
 
@@ -88,6 +103,7 @@ def test_a_reading_with_zero_bikes_is_empty() -> None:
 
 
 def test_a_reading_with_any_bikes_is_not_empty() -> None:
+    # Even a single bike means a rider could start a journey.
     assert not is_empty(reading("2026-09-15T08:00:00+00:00", bikes=1))
 
 
@@ -95,6 +111,7 @@ def test_a_reading_with_any_bikes_is_not_empty() -> None:
 
 
 def _empty_readings_at(*minutes_past_eight: int) -> list[Reading]:
+    """Empty readings at 08:MM for each minute given, with distinct ids."""
     return [
         reading(f"2026-09-15T08:{minute:02d}:00+00:00", bikes=0, reading_id=index)
         for index, minute in enumerate(minutes_past_eight, start=1)
@@ -102,6 +119,7 @@ def _empty_readings_at(*minutes_past_eight: int) -> list[Reading]:
 
 
 def test_count_equal_to_the_minimum_is_starved() -> None:
+    # 3 empty readings with a minimum of 3: exactly at the threshold counts.
     result = evaluate_starvation(_empty_readings_at(0, 15, 30), METRO, DAY)
 
     assert result.empty_reading_count == 3
@@ -109,6 +127,7 @@ def test_count_equal_to_the_minimum_is_starved() -> None:
 
 
 def test_count_one_below_the_minimum_is_not_starved() -> None:
+    # 2 empty readings with a minimum of 3: one short.
     result = evaluate_starvation(_empty_readings_at(0, 15), METRO, DAY)
 
     assert result.empty_reading_count == 2
@@ -117,14 +136,15 @@ def test_count_one_below_the_minimum_is_not_starved() -> None:
 
 def test_only_empty_readings_inside_the_window_are_counted() -> None:
     readings = [
-        reading("2026-09-15T07:45:00+00:00", bikes=0, reading_id=1),
-        reading("2026-09-15T08:00:00+00:00", bikes=5, reading_id=2),
-        reading("2026-09-15T08:15:00+00:00", bikes=0, reading_id=3),
-        reading("2026-09-15T10:00:00+00:00", bikes=0, reading_id=4),
+        reading("2026-09-15T07:45:00+00:00", bikes=0, reading_id=1),  # before window
+        reading("2026-09-15T08:00:00+00:00", bikes=5, reading_id=2),  # inside, has bikes
+        reading("2026-09-15T08:15:00+00:00", bikes=0, reading_id=3),  # inside, empty
+        reading("2026-09-15T10:00:00+00:00", bikes=0, reading_id=4),  # excluded end
     ]
 
     result = evaluate_starvation(readings, METRO, DAY)
 
+    # Two readings are inside the window, and one of them is empty.
     assert result.readings_in_window == 2
     assert result.empty_reading_count == 1
     assert result.window == PeakWindow(start=utc(8), end=utc(10))
@@ -135,15 +155,17 @@ def test_only_empty_readings_inside_the_window_are_counted() -> None:
 
 def test_duplicates_are_dropped_and_counted() -> None:
     first = reading("2026-09-15T08:00:00+00:00", reading_id=1)
-    second = reading("2026-09-15T08:00:00+00:00", reading_id=2)
+    second = reading("2026-09-15T08:00:00+00:00", reading_id=2)  # same moment
     other = reading("2026-09-15T08:15:00+00:00", reading_id=3)
 
     kept, duplicates = deduplicate([first, second, other])
 
+    # The later row (id 2) replaces the earlier one; one duplicate dropped.
     assert kept == [second, other]
     assert duplicates == 1
 
 
+# Run twice: rows arriving in id order, then in reverse order.
 @pytest.mark.parametrize("order", [(0, 1), (1, 0)])
 def test_highest_id_wins_regardless_of_input_order(order: tuple[int, int]) -> None:
     older = reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=7)
@@ -152,10 +174,12 @@ def test_highest_id_wins_regardless_of_input_order(order: tuple[int, int]) -> No
 
     kept, _ = deduplicate([candidates[i] for i in order])
 
+    # Row 9 always wins, whichever order the rows were seen in.
     assert kept == [newer]
 
 
 def test_duplicates_do_not_inflate_the_empty_count() -> None:
+    # Like seed station 104: the 08:00 empty reading is stored twice.
     readings = [
         reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=1),
         reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=2),
@@ -164,6 +188,7 @@ def test_duplicates_do_not_inflate_the_empty_count() -> None:
 
     result = evaluate_starvation(readings, METRO, DAY)
 
+    # Counting both copies would give 3 and a false "starved".
     assert result.empty_reading_count == 2
     assert result.duplicates == 1
     assert not result.starved
@@ -173,6 +198,7 @@ def test_duplicates_do_not_inflate_the_empty_count() -> None:
 
 
 def test_out_of_service_readings_are_excluded_and_counted() -> None:
+    # Like seed station 103: 0 bikes but also 0 docks, so it was closed.
     readings = [
         reading("2026-09-15T08:00:00+00:00", bikes=0, docks=0, reading_id=1),
         reading("2026-09-15T08:15:00+00:00", bikes=0, docks=0, reading_id=2),
@@ -181,6 +207,7 @@ def test_out_of_service_readings_are_excluded_and_counted() -> None:
 
     result = evaluate_starvation(readings, METRO, DAY)
 
+    # None of them count; all three are reported as out of service.
     assert result.empty_reading_count == 0
     assert result.readings_in_window == 0
     assert result.out_of_service == 3
@@ -192,6 +219,7 @@ def test_out_of_service_readings_are_excluded_and_counted() -> None:
 
 
 def test_no_readings_in_the_window_is_no_data() -> None:
+    # The only reading is at 11:00, after the window.
     result = evaluate_starvation([reading("2026-09-15T11:00:00+00:00")], METRO, DAY)
 
     assert result.data_status is DataStatus.NO_DATA
@@ -204,13 +232,15 @@ def test_no_readings_in_the_window_is_no_data() -> None:
 
 def test_partly_out_of_service_window_is_ok_with_exclusions_reported() -> None:
     readings = [
-        reading("2026-09-15T08:00:00+00:00", bikes=0, docks=0, reading_id=1),
-        reading("2026-09-15T08:15:00+00:00", bikes=0, docks=12, reading_id=2),
-        reading("2026-09-15T08:30:00+00:00", bikes=3, docks=12, reading_id=3),
+        reading("2026-09-15T08:00:00+00:00", bikes=0, docks=0, reading_id=1),  # closed
+        reading("2026-09-15T08:15:00+00:00", bikes=0, docks=12, reading_id=2),  # empty
+        reading("2026-09-15T08:30:00+00:00", bikes=3, docks=12, reading_id=3),  # has bikes
     ]
 
     result = evaluate_starvation(readings, METRO, DAY)
 
+    # Some in-service data exists, so the status is "ok"; the closed reading
+    # is still reported as excluded.
     assert result.data_status is DataStatus.OK
     assert result.readings_in_window == 2
     assert result.out_of_service == 1
@@ -221,6 +251,7 @@ def test_partly_out_of_service_window_is_ok_with_exclusions_reported() -> None:
 
 
 def test_same_instant_in_different_utc_notations_is_one_reading() -> None:
+    # "Z" and "+00:00" both mean UTC, so these are the same moment.
     zulu = reading("2026-09-15T08:00:00Z", reading_id=1)
     offset = reading("2026-09-15T08:00:00+00:00", reading_id=2)
 
@@ -231,12 +262,15 @@ def test_same_instant_in_different_utc_notations_is_one_reading() -> None:
 
 
 def test_conflicting_duplicates_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    # Same moment, different values (0 bikes vs 4 bikes): suspicious data.
     older = reading("2026-09-15T08:00:00+00:00", bikes=0, reading_id=7)
     newer = reading("2026-09-15T08:00:00+00:00", bikes=4, reading_id=9)
 
+    # caplog captures log messages emitted inside the "with" block.
     with caplog.at_level(logging.WARNING, logger="station_health"):
         kept, _ = deduplicate([newer, older])
 
+    # The newest row wins, and exactly one warning names the station and rows.
     assert kept == [newer]
     [record] = caplog.records
     assert "station 101" in record.getMessage()
@@ -244,6 +278,7 @@ def test_conflicting_duplicates_are_logged(caplog: pytest.LogCaptureFixture) -> 
 
 
 def test_identical_duplicates_are_not_logged(caplog: pytest.LogCaptureFixture) -> None:
+    # Exact copies are harmless, so they are dropped quietly.
     same = [reading("2026-09-15T08:00:00+00:00", reading_id=i) for i in (1, 2)]
 
     with caplog.at_level(logging.WARNING, logger="station_health"):
@@ -255,13 +290,14 @@ def test_identical_duplicates_are_not_logged(caplog: pytest.LogCaptureFixture) -
 # --- NFR-08: robust timestamp parsing ---------------------------------------
 
 
+# Four ways of writing 08:15 UTC; all must parse to the same moment.
 @pytest.mark.parametrize(
     ("recorded_at", "expected"),
     [
-        ("2026-09-15T08:15:00Z", utc(8, 15)),
-        ("2026-09-15T13:45:00+05:30", utc(8, 15)),
-        ("2026-09-15T03:15:00-05:00", utc(8, 15)),
-        ("2026-09-15T08:15:00", utc(8, 15)),
+        ("2026-09-15T08:15:00Z", utc(8, 15)),  # Z suffix
+        ("2026-09-15T13:45:00+05:30", utc(8, 15)),  # ahead of UTC
+        ("2026-09-15T03:15:00-05:00", utc(8, 15)),  # behind UTC
+        ("2026-09-15T08:15:00", utc(8, 15)),  # no offset: treated as UTC
     ],
 )
 def test_timestamps_are_normalised_to_utc(recorded_at: str, expected: datetime) -> None:
@@ -270,7 +306,8 @@ def test_timestamps_are_normalised_to_utc(recorded_at: str, expected: datetime) 
 
 def test_offset_timestamps_land_in_the_right_window() -> None:
     window = peak_window_for(METRO, DAY)
-    # 13:45 in UTC+05:30 is 08:15 UTC (inside); 15:30 in UTC+05:30 is 10:00 UTC (the excluded end).
+    # 13:45 in UTC+05:30 is 08:15 UTC (inside);
+    # 15:30 in UTC+05:30 is 10:00 UTC (the excluded end).
     inside = reading("2026-09-15T13:45:00+05:30", reading_id=1)
     at_end = reading("2026-09-15T15:30:00+05:30", reading_id=2)
 
@@ -281,12 +318,14 @@ def test_unparseable_timestamps_are_skipped_and_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     window = peak_window_for(METRO, DAY)
-    bad = reading("2026-09-15T25:00:00+00:00", reading_id=41)
+    bad = reading("2026-09-15T25:00:00+00:00", reading_id=41)  # hour 25 does not exist
     good = reading("2026-09-15T08:15:00+00:00", reading_id=42)
 
     with caplog.at_level(logging.WARNING, logger="station_health"):
         selected = readings_in_window([bad, good], window)
 
+    # The bad row is skipped (no crash), the good one kept, and a warning
+    # identifies the bad row.
     assert selected == [good]
     [record] = caplog.records
     assert "reading 41 for station 101" in record.getMessage()
@@ -294,10 +333,12 @@ def test_unparseable_timestamps_are_skipped_and_logged(
 
 # --- NFR-09: validated config and windows that cross midnight ---------------
 
+# A night-time rule, 23:00 to 01:00, used to test midnight crossing.
 NIGHT = OperatorConfig(operator_id=9, peak_start=time(23), peak_end=time(1), min_empty_readings=2)
 
 
 def test_window_ending_before_it_starts_crosses_midnight() -> None:
+    # The window starts at 23:00 on the 15th and ends at 01:00 on the 16th.
     assert peak_window_for(NIGHT, DAY) == PeakWindow(
         start=utc(23), end=utc(1, day=date(2026, 9, 16))
     )
@@ -305,9 +346,9 @@ def test_window_ending_before_it_starts_crosses_midnight() -> None:
 
 def test_cross_midnight_window_counts_readings_on_both_days() -> None:
     readings = [
-        reading("2026-09-15T23:30:00+00:00", bikes=0, reading_id=1),
-        reading("2026-09-16T00:30:00+00:00", bikes=0, reading_id=2),
-        reading("2026-09-16T01:00:00+00:00", bikes=0, reading_id=3),
+        reading("2026-09-15T23:30:00+00:00", bikes=0, reading_id=1),  # before midnight
+        reading("2026-09-16T00:30:00+00:00", bikes=0, reading_id=2),  # after midnight
+        reading("2026-09-16T01:00:00+00:00", bikes=0, reading_id=3),  # excluded end
     ]
 
     result = evaluate_starvation(readings, NIGHT, DAY)
@@ -316,14 +357,15 @@ def test_cross_midnight_window_counts_readings_on_both_days() -> None:
     assert result.starved
 
 
+# Each row is a broken configuration that must be refused.
 @pytest.mark.parametrize(
     ("peak_start", "peak_end", "minimum"),
     [
-        ("08:00", "08:00", 3),
-        ("8am", "10:00", 3),
-        ("08:00", "", 3),
-        ("08:00+01:00", "10:00", 3),
-        ("08:00", "10:00", 0),
+        ("08:00", "08:00", 3),  # zero-length window
+        ("8am", "10:00", 3),  # not HH:MM
+        ("08:00", "", 3),  # missing end
+        ("08:00+01:00", "10:00", 3),  # carries an offset; times must be UTC
+        ("08:00", "10:00", 0),  # threshold below 1
     ],
 )
 def test_invalid_configs_are_rejected(peak_start: str, peak_end: str, minimum: int) -> None:

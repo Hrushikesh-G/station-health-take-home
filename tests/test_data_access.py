@@ -1,3 +1,9 @@
+"""Tests for the database layer: settings, connections and SQL queries.
+
+These talk to a real (temporary) SQLite database built by the
+``database_path`` fixture, but not to the HTTP API.
+"""
+
 from __future__ import annotations
 
 import sqlite3
@@ -16,12 +22,16 @@ from station_health.repository import find_operator_station, get_operator_config
 from station_health.starvation import OperatorConfig, peak_window_for, readings_in_window
 from station_health.supplied import DATABASE_PATH
 
+# --- NFR-05 / NFR-12: settings and connections ------------------------------
+
 
 def test_default_settings_use_the_supplied_database_path() -> None:
+    # Without a test override, the app reads the supplied station_health.db.
     assert get_settings() == Settings(database_path=DATABASE_PATH)
 
 
 def test_open_connection_reads_the_injected_database(database_path: Path) -> None:
+    # A connection to the temporary database can read the seeded operators.
     with open_connection(database_path) as connection:
         row = connection.execute("SELECT name FROM operators WHERE id = 1").fetchone()
 
@@ -29,9 +39,11 @@ def test_open_connection_reads_the_injected_database(database_path: Path) -> Non
 
 
 def test_open_connection_closes_the_connection_on_exit(database_path: Path) -> None:
+    # Leave the "with" block straight away...
     with open_connection(database_path) as connection:
         pass
 
+    # ...after which the connection must be closed: using it raises an error.
     with pytest.raises(sqlite3.ProgrammingError):
         connection.execute("SELECT 1")
 
@@ -39,16 +51,19 @@ def test_open_connection_closes_the_connection_on_exit(database_path: Path) -> N
 def test_open_connection_refuses_a_missing_file_without_creating_it(tmp_path: Path) -> None:
     missing = tmp_path / "missing.db"
 
+    # Opening a database that does not exist raises our own error...
     with pytest.raises(DatabaseUnavailable):
         with open_connection(missing):
             pass
 
+    # ...and, unlike plain sqlite3.connect, does not create an empty file.
     assert not missing.exists()
 
 
 # --- FR-03: operator configuration ------------------------------------------
 
 
+# parametrize runs the same test once per row: once for each operator.
 @pytest.mark.parametrize(
     ("operator_id", "expected"),
     [
@@ -59,6 +74,7 @@ def test_open_connection_refuses_a_missing_file_without_creating_it(tmp_path: Pa
 def test_each_operator_loads_its_own_configuration(
     database_path: Path, operator_id: int, expected: OperatorConfig
 ) -> None:
+    # Each operator gets its own window and threshold from operator_configs.
     with open_connection(database_path) as connection:
         assert get_operator_config(connection, operator_id) == expected
 
@@ -67,6 +83,7 @@ def test_each_operator_loads_its_own_configuration(
 
 
 def test_get_readings_returns_every_candidate_for_the_window(database_path: Path) -> None:
+    # Load MetroCycle's window for 2026-09-15 and station 101's candidates.
     with open_connection(database_path) as connection:
         config = get_operator_config(connection, 1)
         window = peak_window_for(config, date(2026, 9, 15))
@@ -76,6 +93,7 @@ def test_get_readings_returns_every_candidate_for_the_window(database_path: Path
     # the 2026-09-14 reading; the exact filter keeps the 5 inside 08:00-10:00.
     assert len(candidates) == 8
     assert {reading.station_id for reading in candidates} == {101}
+    # recorded_at[11:16] is the "HH:MM" part of the timestamp text.
     assert [r.recorded_at[11:16] for r in readings_in_window(candidates, window)] == [
         "08:00",
         "08:15",
@@ -88,6 +106,8 @@ def test_get_readings_returns_every_candidate_for_the_window(database_path: Path
 # --- FR-08: stations are only visible to their operator ---------------------
 
 
+# Each row: which operator asks, about which station, and whether they should
+# see it. 999 does not exist at all.
 @pytest.mark.parametrize(
     ("operator_id", "station_id", "visible"),
     [
