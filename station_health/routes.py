@@ -14,7 +14,7 @@ from station_health.repository import (
     get_operator_config,
     get_readings,
 )
-from station_health.schemas import StarvationResponse
+from station_health.schemas import PeakWindowOut, StarvationResponse
 from station_health.starvation import evaluate_starvation, peak_window_for
 
 router = APIRouter()
@@ -37,4 +37,12 @@ def get_station_starvation(
         readings = get_readings(connection, station_id, peak_window_for(config, day))
 
     result = evaluate_starvation(readings, config, day)
-    return StarvationResponse(station_id=station_id, date=day, starved=result.starved)
+    return StarvationResponse(
+        station_id=station_id,
+        date=day,
+        starved=result.starved,
+        empty_reading_count=result.empty_reading_count,
+        min_empty_readings=result.min_empty_readings,
+        peak_window=PeakWindowOut(start=result.window.start, end=result.window.end),
+        readings_in_window=result.readings_in_window,
+    )
