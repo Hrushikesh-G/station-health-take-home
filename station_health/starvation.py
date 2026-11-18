@@ -81,3 +81,29 @@ def readings_in_window(readings: Iterable[Reading], window: PeakWindow) -> list[
 def is_empty(reading: Reading) -> bool:
     """A reading is empty when no bikes are available to start a journey."""
     return reading.bikes_available == 0
+
+
+@dataclass(frozen=True)
+class StarvationResult:
+    window: PeakWindow
+    min_empty_readings: int
+    empty_reading_count: int
+    readings_in_window: int
+
+    @property
+    def starved(self) -> bool:
+        return self.empty_reading_count >= self.min_empty_readings
+
+
+def evaluate_starvation(
+    readings: Iterable[Reading], config: OperatorConfig, day: date
+) -> StarvationResult:
+    """Apply the operator's starvation rule to one station's readings for ``day``."""
+    window = peak_window_for(config, day)
+    considered = readings_in_window(readings, window)
+    return StarvationResult(
+        window=window,
+        min_empty_readings=config.min_empty_readings,
+        empty_reading_count=sum(1 for reading in considered if is_empty(reading)),
+        readings_in_window=len(considered),
+    )

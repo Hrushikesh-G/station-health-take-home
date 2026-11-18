@@ -6,6 +6,7 @@ from station_health.starvation import (
     OperatorConfig,
     PeakWindow,
     Reading,
+    evaluate_starvation,
     is_empty,
     parse_utc,
     peak_window_for,
@@ -82,3 +83,42 @@ def test_a_reading_with_zero_bikes_is_empty() -> None:
 
 def test_a_reading_with_any_bikes_is_not_empty() -> None:
     assert not is_empty(reading("2026-09-15T08:00:00+00:00", bikes=1))
+
+
+# --- FR-06: starved when the count reaches the threshold --------------------
+
+
+def _empty_readings_at(*minutes_past_eight: int) -> list[Reading]:
+    return [
+        reading(f"2026-09-15T08:{minute:02d}:00+00:00", bikes=0, reading_id=index)
+        for index, minute in enumerate(minutes_past_eight, start=1)
+    ]
+
+
+def test_count_equal_to_the_minimum_is_starved() -> None:
+    result = evaluate_starvation(_empty_readings_at(0, 15, 30), METRO, DAY)
+
+    assert result.empty_reading_count == 3
+    assert result.starved
+
+
+def test_count_one_below_the_minimum_is_not_starved() -> None:
+    result = evaluate_starvation(_empty_readings_at(0, 15), METRO, DAY)
+
+    assert result.empty_reading_count == 2
+    assert not result.starved
+
+
+def test_only_empty_readings_inside_the_window_are_counted() -> None:
+    readings = [
+        reading("2026-09-15T07:45:00+00:00", bikes=0, reading_id=1),
+        reading("2026-09-15T08:00:00+00:00", bikes=5, reading_id=2),
+        reading("2026-09-15T08:15:00+00:00", bikes=0, reading_id=3),
+        reading("2026-09-15T10:00:00+00:00", bikes=0, reading_id=4),
+    ]
+
+    result = evaluate_starvation(readings, METRO, DAY)
+
+    assert result.readings_in_window == 2
+    assert result.empty_reading_count == 1
+    assert result.window == PeakWindow(start=utc(8), end=utc(10))
