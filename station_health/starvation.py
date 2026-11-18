@@ -78,8 +78,26 @@ def parse_utc(value: str) -> datetime:
 
 
 def readings_in_window(readings: Iterable[Reading], window: PeakWindow) -> list[Reading]:
-    """Readings whose timestamp falls in ``[window.start, window.end)``."""
-    return [reading for reading in readings if window.contains(parse_utc(reading.recorded_at))]
+    """Readings whose timestamp falls in ``[window.start, window.end)``.
+
+    A reading whose timestamp cannot be parsed is skipped and logged rather
+    than failing the whole request.
+    """
+    selected = []
+    for reading in readings:
+        try:
+            instant = parse_utc(reading.recorded_at)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Skipping reading %s for station %s: unparseable recorded_at %r",
+                reading.id,
+                reading.station_id,
+                reading.recorded_at,
+            )
+            continue
+        if window.contains(instant):
+            selected.append(reading)
+    return selected
 
 
 def deduplicate(readings: Iterable[Reading]) -> tuple[list[Reading], int]:

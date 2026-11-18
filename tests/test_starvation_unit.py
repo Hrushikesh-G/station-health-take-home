@@ -249,3 +249,43 @@ def test_identical_duplicates_are_not_logged(caplog: pytest.LogCaptureFixture) -
         deduplicate(same)
 
     assert caplog.records == []
+
+
+# --- NFR-08: robust timestamp parsing ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("recorded_at", "expected"),
+    [
+        ("2026-09-15T08:15:00Z", utc(8, 15)),
+        ("2026-09-15T13:45:00+05:30", utc(8, 15)),
+        ("2026-09-15T03:15:00-05:00", utc(8, 15)),
+        ("2026-09-15T08:15:00", utc(8, 15)),
+    ],
+)
+def test_timestamps_are_normalised_to_utc(recorded_at: str, expected: datetime) -> None:
+    assert parse_utc(recorded_at) == expected
+
+
+def test_offset_timestamps_land_in_the_right_window() -> None:
+    window = peak_window_for(METRO, DAY)
+    # 13:45 in UTC+05:30 is 08:15 UTC (inside); 15:30 in UTC+05:30 is 10:00 UTC (the excluded end).
+    inside = reading("2026-09-15T13:45:00+05:30", reading_id=1)
+    at_end = reading("2026-09-15T15:30:00+05:30", reading_id=2)
+
+    assert readings_in_window([inside, at_end], window) == [inside]
+
+
+def test_unparseable_timestamps_are_skipped_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    window = peak_window_for(METRO, DAY)
+    bad = reading("2026-09-15T25:00:00+00:00", reading_id=41)
+    good = reading("2026-09-15T08:15:00+00:00", reading_id=42)
+
+    with caplog.at_level(logging.WARNING, logger="station_health"):
+        selected = readings_in_window([bad, good], window)
+
+    assert selected == [good]
+    [record] = caplog.records
+    assert "reading 41 for station 101" in record.getMessage()
