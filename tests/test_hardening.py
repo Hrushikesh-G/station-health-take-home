@@ -72,3 +72,43 @@ def test_invalid_operator_config_returns_500_and_is_logged(
     assert response.status_code == 500
     assert response.json() == {"detail": "Operator configuration invalid"}
     assert any("operator 1" in r.getMessage() for r in caplog.records)
+
+
+# --- NFR-10: strict input validation ----------------------------------------
+
+
+def status_for(client: TestClient, station_id: object = 101, date: str = SEED_DATE) -> int:
+    return client.get(
+        f"/stations/{station_id}/starvation", params={"date": date}, headers=METRO
+    ).status_code
+
+
+@pytest.mark.parametrize(
+    "lenient_date",
+    ["1694736000", "2026-09-15T00:00:00", "2026-09-15 08:00", "+2026-09-15"],
+)
+def test_dates_that_default_coercion_would_accept_are_rejected(
+    client: TestClient, lenient_date: str
+) -> None:
+    # FastAPI's date type turns "1694736000" into 2023-09-15 without error.
+    assert status_for(client, date=lenient_date) == 422
+
+
+@pytest.mark.parametrize("station_id", ["0", "-5", "99999999999999999999"])
+def test_out_of_range_station_ids_are_rejected_not_500(
+    client: TestClient, station_id: str
+) -> None:
+    assert status_for(client, station_id=station_id) == 422
+
+
+@pytest.mark.parametrize("date", ["0001-01-01", "9999-12-31"])
+def test_dates_outside_the_supported_range_are_rejected(client: TestClient, date: str) -> None:
+    response = client.get("/stations/101/starvation", params={"date": date}, headers=METRO)
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "date must be between 0001-01-02 and 9999-12-28"}
+
+
+@pytest.mark.parametrize("date", ["0001-01-02", "9999-12-28"])
+def test_supported_range_edges_are_accepted(client: TestClient, date: str) -> None:
+    assert starvation(client, date=date)["data_status"] == "no_data"
