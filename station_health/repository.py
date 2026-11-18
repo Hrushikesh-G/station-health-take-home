@@ -5,7 +5,12 @@ from __future__ import annotations
 import sqlite3
 from datetime import timedelta
 
-from station_health.starvation import OperatorConfig, PeakWindow, Reading
+from station_health.starvation import (
+    InvalidOperatorConfig,
+    OperatorConfig,
+    PeakWindow,
+    Reading,
+)
 
 
 def find_operator_station(
@@ -33,7 +38,7 @@ def get_operator_config(connection: sqlite3.Connection, operator_id: int) -> Ope
         (operator_id,),
     ).fetchone()
     if row is None:
-        raise LookupError(f"operator {operator_id} has no configuration")
+        raise InvalidOperatorConfig(f"operator {operator_id}: no configuration row")
     return OperatorConfig.from_row(
         operator_id,
         row["peak_start"],

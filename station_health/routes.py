@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Annotated
 
@@ -15,11 +16,18 @@ from station_health.repository import (
     get_readings,
 )
 from station_health.schemas import ExcludedReadings, PeakWindowOut, StarvationResponse
-from station_health.starvation import evaluate_starvation, peak_window_for
+from station_health.starvation import (
+    InvalidOperatorConfig,
+    evaluate_starvation,
+    peak_window_for,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 STATION_NOT_FOUND = "Station not found"
+CONFIG_INVALID = "Operator configuration invalid"
 
 
 @router.get("/stations/{station_id}/starvation", response_model=StarvationResponse)
@@ -36,7 +44,11 @@ def get_station_starvation(
         # Nothing else about the station is read before this check passes.
         if not find_operator_station(connection, operator_id, station_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, STATION_NOT_FOUND)
-        config = get_operator_config(connection, operator_id)
+        try:
+            config = get_operator_config(connection, operator_id)
+        except InvalidOperatorConfig as exc:
+            logger.error("Cannot evaluate starvation: %s", exc)
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, CONFIG_INVALID) from exc
         readings = get_readings(connection, station_id, peak_window_for(config, day))
 
     result = evaluate_starvation(readings, config, day)

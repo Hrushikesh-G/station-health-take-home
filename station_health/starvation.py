@@ -9,10 +9,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidOperatorConfig(ValueError):
+    """The operator's stored configuration cannot be used to evaluate the rule."""
 
 
 @dataclass(frozen=True)
@@ -30,17 +34,41 @@ class OperatorConfig:
         peak_end: str,
         min_empty_readings: int,
     ) -> OperatorConfig:
-        return cls(
-            operator_id=operator_id,
-            peak_start=time.fromisoformat(peak_start),
-            peak_end=time.fromisoformat(peak_end),
-            min_empty_readings=min_empty_readings,
-        )
+        """Build a validated config from stored values.
+
+        Raises ``InvalidOperatorConfig`` rather than letting a bad row
+        produce a silently wrong answer.
+        """
+        try:
+            start = time.fromisoformat(peak_start)
+            end = time.fromisoformat(peak_end)
+        except (TypeError, ValueError) as exc:
+            raise InvalidOperatorConfig(
+                f"operator {operator_id}: peak times must be HH:MM, "
+                f"got {peak_start!r} and {peak_end!r}"
+            ) from exc
+        if start.tzinfo is not None or end.tzinfo is not None:
+            raise InvalidOperatorConfig(
+                f"operator {operator_id}: peak times are UTC and must not carry an offset"
+            )
+        if start == end:
+            raise InvalidOperatorConfig(
+                f"operator {operator_id}: peak window {peak_start} to {peak_end} is empty"
+            )
+        if not isinstance(min_empty_readings, int) or min_empty_readings < 1:
+            raise InvalidOperatorConfig(
+                f"operator {operator_id}: min_empty_readings must be a positive integer, "
+                f"got {min_empty_readings!r}"
+            )
+        return cls(operator_id, start, end, min_empty_readings)
 
 
 @dataclass(frozen=True)
 class PeakWindow:
-    """A half-open UTC interval: ``start`` is included, ``end`` is excluded."""
+    """A half-open UTC interval: ``start`` is included, ``end`` is excluded.
+
+    ``end`` falls on the next day when the operator's window crosses midnight.
+    """
 
     start: datetime
     end: datetime
@@ -59,10 +87,12 @@ class Reading:
 
 
 def peak_window_for(config: OperatorConfig, day: date) -> PeakWindow:
-    return PeakWindow(
-        start=datetime.combine(day, config.peak_start, tzinfo=timezone.utc),
-        end=datetime.combine(day, config.peak_end, tzinfo=timezone.utc),
-    )
+    """The operator's window that starts on ``day`` (UTC)."""
+    start = datetime.combine(day, config.peak_start, tzinfo=timezone.utc)
+    end = datetime.combine(day, config.peak_end, tzinfo=timezone.utc)
+    if end <= start:
+        end += timedelta(days=1)
+    return PeakWindow(start=start, end=end)
 
 
 def parse_utc(value: str) -> datetime:

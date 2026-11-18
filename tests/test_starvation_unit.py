@@ -7,6 +7,7 @@ import pytest
 
 from station_health.starvation import (
     DataStatus,
+    InvalidOperatorConfig,
     OperatorConfig,
     PeakWindow,
     Reading,
@@ -289,3 +290,42 @@ def test_unparseable_timestamps_are_skipped_and_logged(
     assert selected == [good]
     [record] = caplog.records
     assert "reading 41 for station 101" in record.getMessage()
+
+
+# --- NFR-09: validated config and windows that cross midnight ---------------
+
+NIGHT = OperatorConfig(operator_id=9, peak_start=time(23), peak_end=time(1), min_empty_readings=2)
+
+
+def test_window_ending_before_it_starts_crosses_midnight() -> None:
+    assert peak_window_for(NIGHT, DAY) == PeakWindow(
+        start=utc(23), end=utc(1, day=date(2026, 9, 16))
+    )
+
+
+def test_cross_midnight_window_counts_readings_on_both_days() -> None:
+    readings = [
+        reading("2026-09-15T23:30:00+00:00", bikes=0, reading_id=1),
+        reading("2026-09-16T00:30:00+00:00", bikes=0, reading_id=2),
+        reading("2026-09-16T01:00:00+00:00", bikes=0, reading_id=3),
+    ]
+
+    result = evaluate_starvation(readings, NIGHT, DAY)
+
+    assert result.empty_reading_count == 2
+    assert result.starved
+
+
+@pytest.mark.parametrize(
+    ("peak_start", "peak_end", "minimum"),
+    [
+        ("08:00", "08:00", 3),
+        ("8am", "10:00", 3),
+        ("08:00", "", 3),
+        ("08:00+01:00", "10:00", 3),
+        ("08:00", "10:00", 0),
+    ],
+)
+def test_invalid_configs_are_rejected(peak_start: str, peak_end: str, minimum: int) -> None:
+    with pytest.raises(InvalidOperatorConfig):
+        OperatorConfig.from_row(1, peak_start, peak_end, minimum)
